@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+venv/
+env/
+.venv/
+
+# Environment Variables & Secrets
+.env
+.env.local
+.env.development
+.env.production
+
+# Build & Output Directories
+dist/
+build/
+.next/
+
+# IDE & OS Files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local MongoDB Database files
+data/
+db/
+*.bson
+*.json
