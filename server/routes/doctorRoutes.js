@@ -16,7 +16,7 @@ const {
 } = require('../middleware/rbacMiddleware');
 const { verifyRole } = require('../middleware/roleMiddleware');
 
-router.get('/', verifyRole('doctor'), ctrl.getAllDoctors);
+router.get('/', ctrl.getAllDoctors);
 router.get('/department/:deptName', ctrl.getDoctorsByDepartment);
 router.get('/smart/:deptName', ctrl.getSmartDoctorMatches);
 

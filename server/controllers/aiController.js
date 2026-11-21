@@ -24,13 +24,12 @@ Rules:
 exports.chat = async (req, res) => {
   try {
     // ── 1. Validate API key ──
-    // Prioritize GEMINI_API_KEY from .env to prevent stale system-wide GOOGLE_API_KEY conflicts
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
     if (!apiKey) {
       console.error('[PrimeAI] Neither GEMINI_API_KEY nor GOOGLE_API_KEY is configured in .env.');
       return res.status(500).json({
         success: false,
-        reply: "I'm having trouble connecting to PrimeAI right now. Please check your API configuration.",
+        reply: "PrimeAI assistant is currently undergoing scheduled maintenance. Please check your GEMINI_API_KEY configuration.",
       });
     }
 
@@ -46,9 +45,9 @@ exports.chat = async (req, res) => {
     // ── 3. Initialize Gemini client (official @google/genai SDK) ──
     const ai = new GoogleGenAI({ apiKey });
 
-    // ── 4. Generate content with supported gemini-3.5-flash-lite / gemini-3.8-flash & fallback ──
-    let response;
-    const modelCandidates = ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
+    // ── 4. Generate content with supported models ──
+    let response = null;
+    const modelCandidates = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash'];
 
     for (const modelName of modelCandidates) {
       try {
@@ -62,30 +61,31 @@ exports.chat = async (req, res) => {
         });
         if (response && response.text) break;
       } catch (modelErr) {
-        // Continue to fallback model if current model experiences high demand (503) or is unavailable
+        console.warn(`[PrimeAI] Model ${modelName} call notice:`, modelErr.message || modelErr);
+        if (modelErr.status === 401 || (modelErr.message && modelErr.message.includes('API key not valid'))) {
+          // Bad API key should immediately report a clear user-facing error rather than 500 crash
+          return res.status(200).json({
+            success: false,
+            reply: 'PrimeAI service error: The configured GEMINI_API_KEY is invalid or expired. Please update it with a valid Gemini API key from Google AI Studio.'
+          });
+        }
         continue;
       }
     }
 
-    if (!response) {
-      throw new Error('All model candidates were unavailable. Please try again.');
-    }
-
-    // ── 5. Extract and validate response text ──
-    const replyText = response.text?.trim();
-    if (!replyText) {
-      console.error('[PrimeAI] Gemini returned an empty response.');
-      return res.status(500).json({
+    if (!response || !response.text) {
+      return res.status(200).json({
         success: false,
-        reply: 'PrimeAI received an empty response. Please try rephrasing your question.',
+        reply: 'PrimeAI service error: Unable to contact Gemini AI models. Please ensure your GEMINI_API_KEY has active quota in Google AI Studio.'
       });
     }
 
+    // ── 5. Extract and validate response text ──
+    const replyText = response.text.trim();
     return res.json({ success: true, reply: replyText });
   } catch (err) {
-    // ── 6. Full detailed error logging & safe JSON fallback ──
-    console.error('[PrimeAI Detailed Error]:', err);
-    return res.status(500).json({
+    console.error('[PrimeAI Error]:', err.message);
+    return res.status(200).json({
       success: false,
       reply: "I'm having trouble connecting to PrimeAI right now. Please try again in a moment.",
     });
