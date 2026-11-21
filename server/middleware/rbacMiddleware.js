@@ -6,10 +6,23 @@ const Prescription = require('../models/Prescription');
 const LabReport = require('../models/LabReport');
 const MedicalRecord = require('../models/MedicalRecord');
 
-// Caller identity comes from the Clerk session email header. Direct download links
+const jwt = require('jsonwebtoken');
+
+// Caller identity comes from verified Bearer token, Clerk session email, or request headers. Direct download links
 // still pass ?email= so PDF links work in a new browser tab.
-const getCallerEmail = (req) =>
-    (req.headers['x-user-email'] || req.query.email || req.body?.email || '').toString().trim().toLowerCase();
+const getCallerEmail = (req) => {
+    let email = (req.headers['x-user-email'] || req.query.email || req.body?.email || '').toString().trim().toLowerCase();
+    if (!email && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+        const token = req.headers.authorization.substring(7);
+        try {
+            if (process.env.JWT_SECRET) {
+                const decoded = jwt.verify(token, process.env.JWT_SECRET);
+                if (decoded?.email) email = decoded.email.toLowerCase();
+            }
+        } catch {}
+    }
+    return email;
+};
 
 const adminEmail = () => (process.env.ADMIN_EMAIL || 'primecare.hospital.admin@gmail.com').toLowerCase();
 

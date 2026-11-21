@@ -13,7 +13,24 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 // the correct name/specialisation even when the doctor is marked absent.
 const getMe = async (req, res) => {
     try {
-        const email = (req.headers['x-user-email'] || req.query.email || '').toString().trim().toLowerCase();
+        let email = (req.headers['x-user-email'] || req.query.email || '').toString().trim().toLowerCase();
+
+        if (!email && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+            const token = req.headers.authorization.substring(7);
+            try {
+                if (process.env.JWT_SECRET) {
+                    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+                    if (decoded?.email) email = decoded.email.toLowerCase();
+                    else if (decoded?.id) {
+                        const u = await User.findById(decoded.id) || await Doctor.findById(decoded.id);
+                        if (u) email = u.email.toLowerCase();
+                    }
+                }
+            } catch {
+                // fall through
+            }
+        }
+
         if (!email || !email.includes('@')) {
             return res.status(401).json({ success: false, message: 'Authentication required.' });
         }

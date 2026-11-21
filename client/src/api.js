@@ -15,31 +15,45 @@ const API = axios.create({
     },
 });
 
-// Attach the signed-in Clerk identity to every API request.
-// This keeps backend authorization scoped to the current account.
+// Attach the signed-in Clerk identity or stored session token to every API request.
 API.interceptors.request.use(async (config) => {
+    // 1. Check custom JWT token first
+    const customToken = localStorage.getItem('primecare_token');
+    if (customToken) {
+        config.headers.Authorization = `Bearer ${customToken}`;
+    }
+
+    // 2. Resolve email from Clerk or localStorage
+    let email = '';
     const clerk = window.Clerk;
-    let email = clerk?.user?.primaryEmailAddress?.emailAddress;
+
+    if (clerk?.loaded && clerk?.user) {
+        email = clerk.user.primaryEmailAddress?.emailAddress || '';
+        try {
+            const token = await clerk.session?.getToken();
+            if (token) {
+                config.headers.Authorization = `Bearer ${token}`;
+            }
+        } catch {
+            // Optional token retrieval
+        }
+    }
 
     if (!email) {
         try {
             const saved = JSON.parse(localStorage.getItem('primecare_user') || '{}');
-            email = saved.email;
+            email = saved.email || '';
         } catch {
             email = '';
         }
     }
 
-    if (email) config.headers['x-user-email'] = email;
-
-    try {
-        const token = await clerk?.session?.getToken();
-        if (token) config.headers.Authorization = `Bearer ${token}`;
-    } catch {
-        // Token is optional; the email header is the main identity for this project.
+    if (email) {
+        config.headers['x-user-email'] = email;
     }
 
     return config;
 });
+
 
 export default API;

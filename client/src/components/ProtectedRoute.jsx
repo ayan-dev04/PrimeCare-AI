@@ -31,7 +31,8 @@ export default function ProtectedRoute({ allow, children }) {
         }
 
         let active = true;
-        API.get('/auth/me')
+        const reqHeaders = email ? { headers: { 'x-user-email': email } } : {};
+        API.get('/auth/me', reqHeaders)
             .then(res => { if (active) setProfile(res.data?.profile || null); })
             .catch(() => { if (active) setProfile(null); })
             .finally(() => { if (active) setChecking(false); });
