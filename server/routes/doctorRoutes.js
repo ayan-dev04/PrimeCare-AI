@@ -35,7 +35,7 @@ router.get('/lab-reports/patient/:patientId', verifyPatientSelf, verifyRole('pat
 router.get('/lab-reports/download/:id', verifyLabReportAccess, ctrl.downloadLabReport);
 
 router.get('/files/doctor/:doctorId/patient/:patientId', verifyDoctorPatient, verifyRole('doctor'), ctrl.getPatientUploadedFiles);
-router.get('/files/record/:recordId', verifyRecordAccess, verifyRole('doctor'), ctrl.getGuardedFile);
+router.get('/files/record/:recordId', verifyRecordAccess, ctrl.getGuardedFile);
 router.post('/records/doctor-upload/:doctorId', verifyDoctorUpload, upload.single('file'), verifyRole('doctor'), ctrl.finalizePatientRecordUpload);
 
 router.get('/:id', ctrl.getDoctorById);

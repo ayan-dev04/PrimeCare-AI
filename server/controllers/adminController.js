@@ -201,7 +201,8 @@ exports.updateDoctor = async (req, res) => {
         }
 
         await doctor.save();
-        logAdminEvent(req, 'UPDATE_DOCTOR', `Updated details for Dr. ${doctor.name} (${doctor.degree} | ${doctor.department})`);
+        const formattedDocName = doctor.name.startsWith('Dr.') ? doctor.name : `Dr. ${doctor.name}`;
+        logAdminEvent(req, 'UPDATE_DOCTOR', `Updated details for ${formattedDocName} (${doctor.degree} | ${doctor.department})`);
         res.status(200).json({ success: true, doctor });
     } catch (err) {
         // Admin edits may legitimately change email — a collision is a conflicting
@@ -218,7 +219,8 @@ exports.deleteDoctor = async (req, res) => {
         const { id } = req.params;
         const deleted = await Doctor.findByIdAndDelete(id);
         if (!deleted) return res.status(404).json({ success: false, error: 'Doctor not found' });
-        logAdminEvent(req, 'DELETE_DOCTOR', `Removed Dr. ${deleted.name} from hospital records`);
+        const formattedDelName = deleted.name.startsWith('Dr.') ? deleted.name : `Dr. ${deleted.name}`;
+        logAdminEvent(req, 'DELETE_DOCTOR', `Removed ${formattedDelName} from hospital records`);
         res.status(200).json({ success: true, message: 'Doctor profile removed.' });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -459,7 +461,15 @@ exports.deleteAppointment = async (req, res) => {
 // ── 5. System Security & Audit Logs (MongoDB-persisted) ──
 exports.getSecurityLogs = async (req, res) => {
     try {
-        const logs = await AuditLog.find().sort({ createdAt: -1 }).limit(100);
+        const rawLogs = await AuditLog.find().sort({ createdAt: -1 }).limit(100);
+        const logs = rawLogs.map(log => {
+            const l = log.toObject();
+            if (l.details) {
+                // Normalize any historical "Dr. Dr." to single "Dr. "
+                l.details = l.details.replace(/\bDr\.?\s*Dr\.?\s*/gi, 'Dr. ');
+            }
+            return l;
+        });
         res.status(200).json({ success: true, logs });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
