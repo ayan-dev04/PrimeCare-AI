@@ -1,0 +1,40 @@
+@"
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Build files
+dist/
+**/dist/
+build/
+**/build/
+.next/
+coverage/
+
+# Python environments
+venv/
+env/
+.venv/
+
+# IDE and editor files
+.idea/
+.vscode/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Local database files
+data/
+db/
+*.bson
+
+# Logs
+*.log
+npm-debug.log*
+"@ | Set-Content -Encoding utf8 .gitignore
