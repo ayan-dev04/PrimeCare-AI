@@ -2,22 +2,14 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// Ensure storage directory exists
+// Ensure local storage directory exists for fallback / local development
 const uploadDir = path.resolve(__dirname, '../uploads');
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => {
-        // Sanitize and append timestamp to prevent filename collisions
-        const cleanName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
-        cb(null, `${Date.now()}-${cleanName}`);
-    }
-});
+// Memory storage keeps buffer in memory for instant Cloudinary streaming or local disk fallback
+const storage = multer.memoryStorage();
 
 // File filter: accept PDFs, Word documents, and medical scan images
 const fileFilter = (req, file, cb) => {
@@ -43,3 +35,4 @@ const upload = multer({
 });
 
 module.exports = upload;
+

@@ -287,12 +287,20 @@ exports.downloadPrescriptionPdf = async (req, res) => {
     }
 };
 
+const { uploadToCloudinary } = require('../utils/cloudinary');
+const fs = require('fs');
+
 exports.getGuardedFile = async (req, res) => {
     try {
         const caller = getCallerEmail(req);
         if (!caller) return res.status(401).json({ success: false, error: 'Auth required.' });
         const record = req.record || await MedicalRecord.findById(req.params.recordId);
         if (!record) return res.status(404).json({ success: false, error: 'Record not found.' });
+
+        // Remote Cloudinary or external URL: redirect directly
+        if (record.fileUrl && (record.fileUrl.startsWith('http://') || record.fileUrl.startsWith('https://'))) {
+            return res.redirect(record.fileUrl);
+        }
 
         // Prescription/lab-report records point at virtual PDF endpoints, not uploads/.
         // Forward them to the correct generator with the caller identity attached.
@@ -302,7 +310,10 @@ exports.getGuardedFile = async (req, res) => {
         }
 
         const safePath = path.resolve(UPLOAD_DIR, path.basename(record.fileUrl));
-        res.sendFile(safePath, { headers: { 'Content-Type': record.fileType || 'application/pdf' } });
+        if (fs.existsSync(safePath)) {
+            return res.sendFile(safePath, { headers: { 'Content-Type': record.fileType || 'application/pdf' } });
+        }
+        res.status(404).json({ success: false, error: 'File not found on server.' });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -408,6 +419,24 @@ exports.finalizePatientRecordUpload = async (req, res) => {
         if (!doctor) return res.status(404).json({ success: false, error: 'Doctor not found.' });
         if (!req.file) return badReq(res, 'No file provided.');
 
+        let finalUrl = '/uploads/default-medical-report.pdf';
+        let cloudUploaded = null;
+        try {
+            cloudUploaded = await uploadToCloudinary(req.file, { folder: 'primecare/doctor_uploads' });
+        } catch (cloudErr) {
+            console.error('[Upload] Cloudinary upload failed, falling back to local disk:', cloudErr.message);
+        }
+
+        if (cloudUploaded && cloudUploaded.secure_url) {
+            finalUrl = cloudUploaded.secure_url;
+        } else {
+            const cleanName = req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+            const diskFilename = `${Date.now()}-${cleanName}`;
+            const diskPath = path.resolve(UPLOAD_DIR, diskFilename);
+            fs.writeFileSync(diskPath, req.file.buffer);
+            finalUrl = `/uploads/${diskFilename}`;
+        }
+
         const record = await MedicalRecord.create({
             patientId,
             patientEmail: (patientEmail || (String(patientId).includes('@') ? patientId : '')).toLowerCase(),
@@ -415,7 +444,7 @@ exports.finalizePatientRecordUpload = async (req, res) => {
             recordDate: new Date().toISOString().split('T')[0],
             doctorName: doctor.name, department: doctor.department,
             fileName: req.file.originalname,
-            fileUrl: `/uploads/${req.file.filename}`,
+            fileUrl: finalUrl,
             fileType: req.file.mimetype,
             fileSize: req.file.size,
             notes, uploadedBy: 'doctor'

@@ -17,9 +17,25 @@ const app = express();
 const server = http.createServer(app);
 
 
-// ── Middleware Configuration ──
+// ── CORS & Security Configuration ──
+// Support comma-separated origins from CLIENT_URL in addition to local development ports
+const allowedOrigins = [
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'http://localhost:5000',
+    'http://127.0.0.1:5173',
+    ...(process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',').map(u => u.trim().replace(/\/+$/, '')) : [])
+];
+
 app.use(cors({
-    origin: '*',
+    origin: (origin, callback) => {
+        // Allow requests with no origin (e.g. mobile apps, curl, server-to-server) or matching allowed list
+        if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+            return callback(null, true);
+        }
+        return callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
+    credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     // x-user-email MUST be whitelisted — it is the Clerk identity header for all admin RBAC calls
     allowedHeaders: ['Content-Type', 'Authorization', 'x-user-email']
@@ -32,7 +48,12 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ── Health Check Route ──
 app.get('/api/health', (req, res) => {
-    res.status(200).json({ status: 'ok', service: 'PrimeCare Hospital Backend' });
+    res.status(200).json({
+        status: 'ok',
+        service: 'PrimeCare Hospital Backend',
+        environment: process.env.NODE_ENV || 'development',
+        dbStatus: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+    });
 });
 
 // ── API Routes Mounting ──
@@ -41,6 +62,17 @@ app.use('/api/doctors', require('./routes/doctorRoutes'));
 app.use('/api/appointments', require('./routes/appointmentRoutes'));
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
+
+// ── Centralized Production Error Handling Middleware ──
+app.use((err, req, res, next) => {
+    console.error('[Unhandled Error]:', err.stack || err.message);
+    const isProd = process.env.NODE_ENV === 'production';
+    res.status(err.status || 500).json({
+        success: false,
+        error: isProd ? 'An unexpected server error occurred.' : (err.message || 'Internal Server Error')
+    });
+});
+
 
 
 // ── Server & Database Initialization ──

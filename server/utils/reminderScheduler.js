@@ -42,72 +42,92 @@ function buildReminderEmail({ appt, docName, roomId, roomUrl }) {
     });
 }
 
+async function checkAndSendReminders() {
+    try {
+        const now = new Date();
+        // Query the actual reminder window instead of "today", so a 12:00 AM
+        // appointment still fires at 11:30 PM on the previous calendar day.
+        const windowStart = new Date(now.getTime() + 25 * 60000);
+        const windowEnd = new Date(now.getTime() + 35 * 60000);
+        const utcStr = now.toISOString().split('T')[0];
+        const localStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+        const upcoming = await Appointment.find({
+            consultationType: 'video',
+            status: 'scheduled',
+            reminderSent: { $ne: true },
+            $or: [
+                { slotStartAt: { $gte: windowStart, $lte: windowEnd } },
+                // Legacy fallback for records saved before slotStartAt existed.
+                { slotStartAt: { $exists: false }, date: { $in: [utcStr, localStr] } }
+            ]
+        }).populate('doctor');
+
+        let remindersProcessed = 0;
+
+        for (const appt of upcoming) {
+            const apptTime = appt.slotStartAt || parseSlotTime(appt.date, appt.timeSlot);
+            if (!apptTime) continue;
+
+            const diffMinutes = (apptTime.getTime() - now.getTime()) / 60000;
+
+            // Target: ~30 minutes before start (bounded window; reminderSent prevents repeats)
+            if (diffMinutes < 25 || diffMinutes > 35) continue;
+
+            const docName = appt.doctor?.name || 'Dr. Specialist';
+            const roomId = appt.videoRoomId || `primecare-room-${appt.tokenNumber.toLowerCase()}`;
+            const roomUrl = `${process.env.CLIENT_URL || 'http://localhost:5173'}/video-consultation?room=${roomId}&token=${appt.tokenNumber}`;
+            const emailHtml = buildReminderEmail({ appt, docName, roomId, roomUrl });
+
+            console.log(`[Scheduler] 30-min window reached for Token ${appt.tokenNumber}. Dispatching reminder emails...`);
+
+            // Dispatch BOTH reminders in parallel; one SMTP failure never blocks the other
+            const [patientRes, docRes] = await Promise.allSettled([
+                sendEmail({
+                    to: appt.patientEmail,
+                    subject: `[Reminder: 30 Mins] Video Consultation with ${docName} | Token: ${appt.tokenNumber}`,
+                    html: emailHtml
+                }),
+                appt.doctor?.email
+                    ? sendEmail({
+                        to: appt.doctor.email,
+                        subject: `[Upcoming Video Visit: 30 Mins] Patient: ${appt.patientName} | Token: ${appt.tokenNumber}`,
+                        html: emailHtml
+                    })
+                    : Promise.resolve({ success: false, error: 'No doctor email on file' })
+            ]);
+            if (patientRes.status === 'rejected' || docRes.status === 'rejected') {
+                console.warn(`[Scheduler] Reminder dispatch issue for Token ${appt.tokenNumber}:`, patientRes.reason || docRes.reason);
+            }
+
+            // Mark as sent atomically to prevent duplicate reminders across jobs
+            appt.reminderSent = true;
+            await appt.save();
+            remindersProcessed++;
+        }
+
+        return { success: true, processed: remindersProcessed };
+    } catch (err) {
+        console.error('[Scheduler Error]:', err.message);
+        return { success: false, error: err.message };
+    }
+}
+
 function initReminderScheduler() {
+    // If running in a setup with external Render Cron Jobs (or explicit disable flag),
+    // skip the in-process cron to prevent duplicate reminder dispatches.
+    if (process.env.DISABLE_INPROCESS_CRON === 'true') {
+        console.log('[Scheduler] In-process cron is DISABLED (DISABLE_INPROCESS_CRON=true). Relying on external scheduler/job.');
+        return;
+    }
+
     console.log('[Scheduler] PrimeCare Real-Time Video Reminder Cron Initialized (every minute).');
 
     cron.schedule('* * * * *', async () => {
-        try {
-            const now = new Date();
-            // Query the actual reminder window instead of "today", so a 12:00 AM
-            // appointment still fires at 11:30 PM on the previous calendar day.
-            const windowStart = new Date(now.getTime() + 25 * 60000);
-            const windowEnd = new Date(now.getTime() + 35 * 60000);
-            const utcStr = now.toISOString().split('T')[0];
-            const localStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-
-            const upcoming = await Appointment.find({
-                consultationType: 'video',
-                status: 'scheduled',
-                reminderSent: { $ne: true },
-                $or: [
-                    { slotStartAt: { $gte: windowStart, $lte: windowEnd } },
-                    // Legacy fallback for records saved before slotStartAt existed.
-                    { slotStartAt: { $exists: false }, date: { $in: [utcStr, localStr] } }
-                ]
-            }).populate('doctor');
-
-            for (const appt of upcoming) {
-                const apptTime = appt.slotStartAt || parseSlotTime(appt.date, appt.timeSlot);
-                if (!apptTime) continue;
-
-                const diffMinutes = (apptTime.getTime() - now.getTime()) / 60000;
-
-                // Target: ~30 minutes before start (bounded window; reminderSent prevents repeats)
-                if (diffMinutes < 25 || diffMinutes > 35) continue;
-
-                const docName = appt.doctor?.name || 'Dr. Specialist';
-                const roomId = appt.videoRoomId || `primecare-room-${appt.tokenNumber.toLowerCase()}`;
-                const roomUrl = `${process.env.CLIENT_URL || 'http://localhost:5173'}/video-consultation?room=${roomId}&token=${appt.tokenNumber}`;
-                const emailHtml = buildReminderEmail({ appt, docName, roomId, roomUrl });
-
-                console.log(`[Scheduler] 30-min window reached for Token ${appt.tokenNumber}. Dispatching reminder emails...`);
-
-                // Dispatch BOTH reminders in parallel; one SMTP failure never blocks the other
-                const [patientRes, docRes] = await Promise.allSettled([
-                    sendEmail({
-                        to: appt.patientEmail,
-                        subject: `[Reminder: 30 Mins] Video Consultation with ${docName} | Token: ${appt.tokenNumber}`,
-                        html: emailHtml
-                    }),
-                    appt.doctor?.email
-                        ? sendEmail({
-                            to: appt.doctor.email,
-                            subject: `[Upcoming Video Visit: 30 Mins] Patient: ${appt.patientName} | Token: ${appt.tokenNumber}`,
-                            html: emailHtml
-                        })
-                        : Promise.resolve({ success: false, error: 'No doctor email on file' })
-                ]);
-                if (patientRes.status === 'rejected' || docRes.status === 'rejected') {
-                    console.warn(`[Scheduler] Reminder dispatch issue for Token ${appt.tokenNumber}:`, patientRes.reason || docRes.reason);
-                }
-
-                appt.reminderSent = true;
-                await appt.save();
-            }
-        } catch (err) {
-            console.error('[Scheduler Error]:', err.message);
-        }
+        await checkAndSendReminders();
     });
 }
+
+initReminderScheduler.checkAndSendReminders = checkAndSendReminders;
 
 module.exports = initReminderScheduler;

@@ -266,9 +266,14 @@ exports.bookAppointment = async (req, res) => {
         // Confirmation emails go to both the patient and the selected doctor.
         // The flag guarantees a booking can never send duplicate confirmations.
         if (!appointment.confirmationEmailSent) {
-            await dispatchBookingEmails({ appointment, doctor, queueNumber, tokenNumber, estimatedWaitMinutes, videoRoomId, isVideo });
-            appointment.confirmationEmailSent = true;
-            await appointment.save();
+            try {
+                await dispatchBookingEmails({ appointment, doctor, queueNumber, tokenNumber, estimatedWaitMinutes, videoRoomId, isVideo });
+                appointment.confirmationEmailSent = true;
+                await appointment.save();
+            } catch (emailErr) {
+                console.error('[Booking Email Dispatch Warning] Failed to send email notices:', emailErr.message);
+                // Appointment remains securely saved; do not fail the booking
+            }
         }
 
         res.status(201).json({ success: true, appointment });
@@ -481,6 +486,11 @@ exports.downloadLabReportPdf = async (req, res) => {
     }
 };
 
+const { uploadToCloudinary } = require('../utils/cloudinary');
+const fs = require('fs');
+const path = require('path');
+const UPLOAD_DIR = path.resolve(__dirname, '../uploads');
+
 exports.uploadMedicalRecord = async (req, res) => {
     try {
         const { patientId, patientName, title, category, recordDate, doctorName, department, notes, uploadedBy, fileUrl } = req.body;
@@ -490,10 +500,28 @@ exports.uploadMedicalRecord = async (req, res) => {
         let fileType = 'application/pdf';
 
         if (req.file) {
-            finalUrl = `/uploads/${req.file.filename}`;
             fileName = req.file.originalname;
             fileSize = req.file.size;
             fileType = req.file.mimetype;
+
+            // Attempt Cloudinary upload first if configured
+            let cloudUploaded = null;
+            try {
+                cloudUploaded = await uploadToCloudinary(req.file, { folder: 'primecare/patient_records' });
+            } catch (cloudErr) {
+                console.error('[Upload] Cloudinary upload failed, falling back to local disk:', cloudErr.message);
+            }
+
+            if (cloudUploaded && cloudUploaded.secure_url) {
+                finalUrl = cloudUploaded.secure_url;
+            } else {
+                // Local disk storage fallback for development / offline
+                const cleanName = req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+                const diskFilename = `${Date.now()}-${cleanName}`;
+                const diskPath = path.resolve(UPLOAD_DIR, diskFilename);
+                fs.writeFileSync(diskPath, req.file.buffer);
+                finalUrl = `/uploads/${diskFilename}`;
+            }
         }
 
         const record = new MedicalRecord({
