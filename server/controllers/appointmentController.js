@@ -155,54 +155,75 @@ async function dispatchBookingEmails({ appointment, doctor, queueNumber, tokenNu
         </div>`;
     const tasks = [];
 
-    if (appointment.patientEmail) {
-        tasks.push(sendEmail({
-            to: appointment.patientEmail,
-            subject: `[${consultTypeLabel}] Confirmed - Token: ${tokenNumber} | PrimeCare Hospital`,
-            html: emailCard({
-                title: 'Consultation Confirmed',
-                subtitle: `Official Hospital Token: ${tokenNumber}`,
-                badgeText: consultTypeLabel,
-                contentHtml: `
-                    <p>Dear <strong>${appointment.patientName}</strong>,</p>
-                    <p>Your appointment with <strong>${doctor.name}</strong> (${doctor.department}) has been successfully scheduled.</p>
-                    <div style="background-color: #f8fafc; border-left: 4px solid #4f46e5; padding: 18px; border-radius: 12px; margin: 20px 0;">
-                        <p><strong>Token:</strong> ${tokenNumber} (Queue #${queueNumber})</p>
-                        <p><strong>Date & Time:</strong> ${appointment.date} at ${appointment.timeSlot}</p>
-                        ${isVideo ? joinButton : ''}
-                    </div>
-                `,
-                footerNote: 'Encrypted EHR transaction verified by PrimeCare'
+    if (appointment.patientEmail && !appointment.patientEmailSent) {
+        tasks.push({
+            type: 'patient',
+            promise: sendEmail({
+                to: appointment.patientEmail,
+                subject: `[${consultTypeLabel}] Confirmed - Token: ${tokenNumber} | PrimeCare Hospital`,
+                html: emailCard({
+                    title: 'Consultation Confirmed',
+                    subtitle: `Official Hospital Token: ${tokenNumber}`,
+                    badgeText: consultTypeLabel,
+                    contentHtml: `
+                        <p>Dear <strong>${appointment.patientName}</strong>,</p>
+                        <p>Your appointment with <strong>${doctor.name}</strong> (${doctor.department}) has been successfully scheduled.</p>
+                        <div style="background-color: #f8fafc; border-left: 4px solid #4f46e5; padding: 18px; border-radius: 12px; margin: 20px 0;">
+                            <p><strong>Token:</strong> ${tokenNumber} (Queue #${queueNumber})</p>
+                            <p><strong>Date & Time:</strong> ${appointment.date} at ${appointment.timeSlot}</p>
+                            ${isVideo ? joinButton : ''}
+                        </div>
+                    `,
+                    footerNote: 'Encrypted EHR transaction verified by PrimeCare'
+                })
             })
-        }));
+        });
     }
 
     const doctorEmail = doctor ? await resolveDoctorEmail(doctor) : '';
-    if (doctorEmail) {
-        tasks.push(sendEmail({
-            to: doctorEmail,
-            subject: `[New Booking] ${consultTypeLabel} - Token: ${tokenNumber} | PrimeCare Hospital`,
-            html: emailCard({
-                title: 'New Appointment Assigned',
-                subtitle: `Official Hospital Token: ${tokenNumber}`,
-                badgeText: consultTypeLabel,
-                contentHtml: `
-                    <p>Dear <strong>${doctor.name}</strong>,</p>
-                    <p>A new ${consultTypeLabel.toLowerCase()} has been booked with you by <strong>${appointment.patientName}</strong> (${appointment.patientEmail}).</p>
-                    <div style="background-color: #f8fafc; border-left: 4px solid #4f46e5; padding: 18px; border-radius: 12px; margin: 20px 0;">
-                        <p><strong>Patient:</strong> ${appointment.patientName} (${appointment.patientEmail})</p>
-                        <p><strong>Token:</strong> ${tokenNumber} (Queue #${queueNumber})</p>
-                        <p><strong>Date & Time:</strong> ${appointment.date} at ${appointment.timeSlot}</p>
-                        <p><strong>Reason:</strong> ${appointment.reason || 'General Consultation'}</p>
-                        ${isVideo ? joinButton : ''}
-                    </div>
-                `,
-                footerNote: 'Encrypted EHR transaction verified by PrimeCare'
+    if (doctorEmail && !appointment.doctorEmailSent) {
+        tasks.push({
+            type: 'doctor',
+            promise: sendEmail({
+                to: doctorEmail,
+                subject: `[New Booking] ${consultTypeLabel} - Token: ${tokenNumber} | PrimeCare Hospital`,
+                html: emailCard({
+                    title: 'New Appointment Assigned',
+                    subtitle: `Official Hospital Token: ${tokenNumber}`,
+                    badgeText: consultTypeLabel,
+                    contentHtml: `
+                        <p>Dear <strong>${doctor.name}</strong>,</p>
+                        <p>A new ${consultTypeLabel.toLowerCase()} has been booked with you by <strong>${appointment.patientName}</strong> (${appointment.patientEmail}).</p>
+                        <div style="background-color: #f8fafc; border-left: 4px solid #4f46e5; padding: 18px; border-radius: 12px; margin: 20px 0;">
+                            <p><strong>Patient:</strong> ${appointment.patientName} (${appointment.patientEmail})</p>
+                            <p><strong>Token:</strong> ${tokenNumber} (Queue #${queueNumber})</p>
+                            <p><strong>Date & Time:</strong> ${appointment.date} at ${appointment.timeSlot}</p>
+                            <p><strong>Reason:</strong> ${appointment.reason || 'General Consultation'}</p>
+                            ${isVideo ? joinButton : ''}
+                        </div>
+                    `,
+                    footerNote: 'Encrypted EHR transaction verified by PrimeCare'
+                })
             })
-        }));
+        });
     }
 
-    await Promise.allSettled(tasks);
+    const settled = await Promise.allSettled(tasks.map(task => task.promise));
+    const result = { patientSent: false, doctorSent: false, errors: [] };
+
+    settled.forEach((outcome, index) => {
+        const type = tasks[index].type;
+        const value = outcome.status === 'fulfilled' ? outcome.value : null;
+        if (value?.success) {
+            if (type === 'patient') result.patientSent = true;
+            if (type === 'doctor') result.doctorSent = true;
+            return;
+        }
+        const reason = outcome.status === 'rejected' ? outcome.reason?.message : value?.error;
+        result.errors.push(`${type}: ${reason || 'delivery failed'}`);
+    });
+
+    return result;
 }
 
 exports.bookAppointment = async (req, res) => {
@@ -226,6 +247,19 @@ exports.bookAppointment = async (req, res) => {
         const selectedWindow = windows.find(window => window.slot === timeSlot);
         if (!day || !isWorkingDay || !selectedWindow) {
             return res.status(400).json({ success: false, error: 'Selected slot is outside OPD schedule.' });
+        }
+
+        const existingBooking = await Appointment.findOne({
+            doctor: doctorId,
+            date,
+            timeSlot,
+            status: { $in: ['scheduled', 'in-progress'] }
+        }).select('_id');
+        if (existingBooking) {
+            return res.status(409).json({
+                success: false,
+                error: 'This appointment slot has just been booked. Please choose another available time.'
+            });
         }
 
         const counter = await QueueCounter.findOneAndUpdate(
@@ -263,21 +297,43 @@ exports.bookAppointment = async (req, res) => {
 
         await appointment.save();
 
-        // Confirmation emails go to both the patient and the selected doctor.
-        // The flag guarantees a booking can never send duplicate confirmations.
+        await appointment.populate('doctor', 'name department degree qualification').catch(() => {});
+
+        // Email delivery must never block the booking response. Render free services
+        // block outbound SMTP, so dispatching in the background keeps booking fast.
         if (!appointment.confirmationEmailSent) {
-            try {
-                await dispatchBookingEmails({ appointment, doctor, queueNumber, tokenNumber, estimatedWaitMinutes, videoRoomId, isVideo });
-                appointment.confirmationEmailSent = true;
-                await appointment.save();
-            } catch (emailErr) {
-                console.error('[Booking Email Dispatch Warning] Failed to send email notices:', emailErr.message);
-                // Appointment remains securely saved; do not fail the booking
-            }
+            const appointmentId = appointment._id;
+            setImmediate(() => {
+                dispatchBookingEmails({ appointment, doctor, queueNumber, tokenNumber, estimatedWaitMinutes, videoRoomId, isVideo })
+                    .then(async (result) => {
+                        await Appointment.updateOne(
+                            { _id: appointmentId },
+                            {
+                                patientEmailSent: result.patientSent,
+                                doctorEmailSent: result.doctorSent,
+                                confirmationEmailSent: result.patientSent && result.doctorSent,
+                                emailDeliveryError: result.errors.join(' | ')
+                            }
+                        );
+                    })
+                    .catch(async (emailErr) => {
+                        console.error('[Booking Email Dispatch Warning] Failed to send email notices:', emailErr.message);
+                        await Appointment.updateOne(
+                            { _id: appointmentId },
+                            { emailDeliveryError: emailErr.message }
+                        ).catch(() => {});
+                    });
+            });
         }
 
         res.status(201).json({ success: true, appointment });
     } catch (err) {
+        if (err?.code === 11000) {
+            return res.status(409).json({
+                success: false,
+                error: 'This appointment slot was just booked by another patient. Please choose a different time.'
+            });
+        }
         res.status(500).json({ success: false, error: err.message });
     }
 };

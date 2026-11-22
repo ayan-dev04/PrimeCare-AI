@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../api';
-import { Calendar, Clock, Stethoscope, CheckCircle2, ArrowRight, ShieldCheck, User, Video, Sparkles, AlertCircle } from 'lucide-react';
+import { Calendar, Clock, Stethoscope, CheckCircle2, ArrowRight, ShieldCheck, User, Video, Sparkles, AlertCircle, Loader2 } from 'lucide-react';
 import { useUser } from '@clerk/clerk-react';
 
 // Date inputs are local calendar days; toISOString() alone can return yesterday
@@ -107,6 +107,7 @@ export default function Appointment() {
 
     const handleBooking = async (e) => {
         e.preventDefault();
+        if (submitting) return;
         setErrorBanner('');
 
         if (!selectedDoctorId || !selectedDate || !selectedSlot) {
@@ -157,6 +158,16 @@ export default function Appointment() {
         }
     };
 
+    const bookedDoctor = successAppointment?.doctor && typeof successAppointment.doctor === 'object'
+        ? successAppointment.doctor
+        : null;
+    const bookedDoctorName = bookedDoctor?.name
+        || recommendations.find(rec => rec.doctor._id === selectedDoctorId)?.doctor.name
+        || 'Doctor';
+    const bookedSpecialization = bookedDoctor?.department
+        || successAppointment?.department
+        || selectedDept;
+
     return (
         <div className="min-h-screen bg-slate-50 py-12 px-4 sm:px-6 lg:px-8 font-sans">
             <div className="max-w-5xl mx-auto space-y-8">
@@ -193,8 +204,28 @@ export default function Appointment() {
 
                         <div className="bg-slate-50 border border-slate-200 p-6 rounded-2xl space-y-3 text-xs text-left">
                             <div className="flex justify-between border-b pb-2">
-                                <span className="text-slate-500">Priority Token:</span>
+                                <span className="text-slate-500">Token Number:</span>
                                 <span className="font-mono font-black text-indigo-700 text-base">{successAppointment.tokenNumber}</span>
+                            </div>
+                            <div className="flex justify-between border-b pb-2">
+                                <span className="text-slate-500">Patient Name:</span>
+                                <span className="font-bold text-slate-900">{successAppointment.patientName}</span>
+                            </div>
+                            <div className="flex justify-between border-b pb-2">
+                                <span className="text-slate-500">Doctor:</span>
+                                <span className="font-bold text-slate-900">{bookedDoctorName}</span>
+                            </div>
+                            <div className="flex justify-between border-b pb-2">
+                                <span className="text-slate-500">Specialization:</span>
+                                <span className="font-bold text-slate-900">{bookedSpecialization}</span>
+                            </div>
+                            <div className="flex justify-between border-b pb-2">
+                                <span className="text-slate-500">Appointment Date & Time:</span>
+                                <span className="font-bold text-slate-900">{successAppointment.date} at {successAppointment.timeSlot}</span>
+                            </div>
+                            <div className="flex justify-between border-b pb-2">
+                                <span className="text-slate-500">Status:</span>
+                                <span className="font-bold text-emerald-600 uppercase">{successAppointment.status}</span>
                             </div>
                             <div className="flex justify-between border-b pb-2">
                                 <span className="text-slate-500">Queue Position:</span>
@@ -203,10 +234,6 @@ export default function Appointment() {
                             <div className="flex justify-between border-b pb-2">
                                 <span className="text-slate-500">Estimated Waiting Time:</span>
                                 <span className="font-bold text-emerald-600">~{successAppointment.estimatedWaitMinutes} mins</span>
-                            </div>
-                            <div className="flex justify-between border-b pb-2">
-                                <span className="text-slate-500">Scheduled Window:</span>
-                                <span className="font-bold text-slate-900">{successAppointment.date} at {successAppointment.timeSlot}</span>
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-slate-500">Consultation Format:</span>
@@ -224,6 +251,8 @@ export default function Appointment() {
                             <button
                                 onClick={() => {
                                     setSuccessAppointment(null);
+                                    setPatientReason('');
+                                    setSlotRefreshKey(key => key + 1);
                                     fetchRecommendations();
                                 }}
                                 className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-4 rounded-2xl text-xs"
@@ -440,8 +469,8 @@ export default function Appointment() {
                                     : 'bg-indigo-600 hover:bg-indigo-500 text-white'
                                 }`}
                         >
-                            {availabilityData?.canBook === false ? 'Booking Disabled — Doctor Unavailable' : submitting ? 'Confirming with Medical Staff...' : 'Confirm Appointment & Generate Token'}
-                            <ArrowRight className="w-4 h-4" />
+                            {availabilityData?.canBook === false ? 'Booking Disabled — Doctor Unavailable' : submitting ? 'Booking Appointment...' : 'Book Appointment & Generate Token'}
+                            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                         </button>
                         </div>
                     </form>

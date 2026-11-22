@@ -2,60 +2,163 @@ const nodemailer = require('nodemailer');
 const path = require('path');
 const fs = require('fs');
 
-/**
- * PrimeCare Enterprise Nodemailer Email Utility
- * Generates modern card-based email layouts with the official PrimeCare Hospital logo
- * positioned cleanly in the corner of the card container.
- */
-const sendEmail = async (options) => {
+const SMTP_TIMEOUT_MS = Number(process.env.EMAIL_SMTP_TIMEOUT_MS) || 10000;
+const HTTP_TIMEOUT_MS = Number(process.env.EMAIL_HTTP_TIMEOUT_MS) || 15000;
+
+const localLogoPath = path.resolve(__dirname, '../../client/public/logo.jpeg');
+const hasLogo = fs.existsSync(localLogoPath);
+const LOGO_CID = 'primecare-logo';
+
+const getHttpProvider = () => {
+    if (process.env.BREVO_API_KEY) return 'brevo';
+    if (process.env.RESEND_API_KEY) return 'resend';
+    if (process.env.SENDGRID_API_KEY) return 'sendgrid';
+    return null;
+};
+
+const postJson = async (url, headers, body) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
     try {
-        const transporter = nodemailer.createTransport({
-            service: 'gmail',
-            auth: {
-                user: process.env.EMAIL_USER,
-                pass: process.env.EMAIL_PASS
-            }
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...headers },
+            body: JSON.stringify(body),
+            signal: controller.signal
         });
-
-        // Resolve logo path for inline CID embedding
-        const localLogoPath = path.resolve(__dirname, '../../client/public/logo.jpeg');
-        const hasLogo = fs.existsSync(localLogoPath);
-
-        const defaultAttachments = hasLogo ? [
-            {
-                filename: 'logo.jpeg',
-                path: localLogoPath,
-                cid: 'primecare-logo'
-            }
-        ] : [];
-
-        const recipient = options.to || options.email;
-        if (!recipient) {
-            console.warn('[SMTP Warning] No recipient specified in sendEmail options.');
-            return { success: false, error: 'No recipient' };
+        const text = await response.text();
+        let data = {};
+        try {
+            data = text ? JSON.parse(text) : {};
+        } catch {
+            data = { raw: text };
         }
-
-        const mailOptions = {
-            from: `"PrimeCare Hospital" <${process.env.EMAIL_USER}>`,
-            to: recipient,
-            subject: options.subject,
-            html: options.html,
-            attachments: options.attachments || defaultAttachments
+        if (!response.ok) {
+            throw new Error(data.message || data.error || data.raw || `HTTP ${response.status}`);
+        }
+        return {
+            data,
+            messageId: response.headers.get('x-message-id') || data.id || data.messageId || ''
         };
-
-        const info = await transporter.sendMail(mailOptions);
-        console.log(`[SMTP SUCCESS] Sent to: ${recipient} | Subject: ${options.subject}`);
-        return { success: true, messageId: info.messageId };
-    } catch (error) {
-        console.error(`[SMTP ERROR] Recipient: ${options.to || options.email} | Message: ${error.message}`);
-        return { success: false, error: error.message };
+    } finally {
+        clearTimeout(timer);
     }
 };
 
-/**
- * Helper to build card-styled email HTML with logo positioned in the header corner
- */
+const sendViaBrevo = async ({ to, subject, html, fromEmail, fromName }) => {
+    const body = {
+        sender: { email: fromEmail, name: fromName },
+        to: [{ email: to }],
+        subject,
+        htmlContent: html
+    };
+    const { messageId } = await postJson(
+        'https://api.brevo.com/v3/smtp/email',
+        { 'api-key': process.env.BREVO_API_KEY, accept: 'application/json' },
+        body
+    );
+    return { success: true, provider: 'brevo', messageId };
+};
+
+const sendViaResend = async ({ to, subject, html, fromEmail, fromName }) => {
+    const body = {
+        from: `${fromName} <${fromEmail}>`,
+        to: [to],
+        subject,
+        html
+    };
+    const { messageId } = await postJson(
+        'https://api.resend.com/emails',
+        { Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
+        body
+    );
+    return { success: true, provider: 'resend', messageId };
+};
+
+const sendViaSendGrid = async ({ to, subject, html, fromEmail, fromName }) => {
+    const body = {
+        personalizations: [{ to: [{ email: to }] }],
+        from: { email: fromEmail, name: fromName },
+        subject,
+        content: [{ type: 'text/html', value: html }]
+    };
+    const { messageId } = await postJson(
+        'https://api.sendgrid.com/v3/mail/send',
+        { Authorization: `Bearer ${process.env.SENDGRID_API_KEY}` },
+        body
+    );
+    return { success: true, provider: 'sendgrid', messageId };
+};
+
+const sendViaSmtp = async ({ to, subject, html, fromEmail, fromName, attachments }) => {
+    const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS
+        },
+        connectionTimeout: SMTP_TIMEOUT_MS,
+        greetingTimeout: SMTP_TIMEOUT_MS,
+        socketTimeout: SMTP_TIMEOUT_MS * 2
+    });
+
+    const defaultAttachments = hasLogo ? [{
+        filename: 'logo.jpeg',
+        path: localLogoPath,
+        cid: LOGO_CID
+    }] : [];
+
+    const info = await transporter.sendMail({
+        from: `"${fromName}" <${fromEmail}>`,
+        to,
+        subject,
+        html,
+        attachments: attachments || defaultAttachments
+    });
+    return { success: true, provider: 'smtp', messageId: info.messageId };
+};
+
+const sendEmail = async (options = {}) => {
+    const recipient = options.to || options.email;
+    if (!recipient) {
+        console.warn('[EMAIL Warning] No recipient specified in sendEmail options.');
+        return { success: false, error: 'No recipient' };
+    }
+
+    const fromEmail = options.from || process.env.EMAIL_FROM || process.env.EMAIL_USER;
+    const fromName = process.env.EMAIL_FROM_NAME || 'PrimeCare Hospital';
+    if (!fromEmail) {
+        console.error('[EMAIL Error] EMAIL_FROM or EMAIL_USER is not configured.');
+        return { success: false, error: 'Sender email is not configured' };
+    }
+
+    const payload = {
+        to: recipient,
+        subject: options.subject,
+        html: options.html,
+        fromEmail,
+        fromName,
+        attachments: options.attachments
+    };
+    const provider = getHttpProvider();
+
+    try {
+        let result;
+        if (provider === 'brevo') result = await sendViaBrevo(payload);
+        else if (provider === 'resend') result = await sendViaResend(payload);
+        else if (provider === 'sendgrid') result = await sendViaSendGrid(payload);
+        else result = await sendViaSmtp(payload);
+
+        console.log(`[EMAIL SUCCESS] Provider: ${result.provider} | Sent to: ${recipient} | Subject: ${options.subject}`);
+        return result;
+    } catch (error) {
+        console.error(`[EMAIL ERROR] Provider: ${provider || 'smtp'} | Recipient: ${recipient} | Message: ${error.message}`);
+        return { success: false, provider: provider || 'smtp', error: error.message };
+    }
+};
+
 function createHospitalEmailCard({ title, subtitle, badgeText, contentHtml, footerNote }) {
+    const logoSrc = process.env.EMAIL_LOGO_URL || (getHttpProvider() ? '' : `cid:${LOGO_CID}`);
     return `
     <!DOCTYPE html>
     <html>
@@ -81,7 +184,7 @@ function createHospitalEmailCard({ title, subtitle, badgeText, contentHtml, foot
                 
                 <!-- Logo Top-Right Corner Placement -->
                 <td style="width: 140px; text-align: right; vertical-align: middle;">
-                  <img src="cid:primecare-logo" alt="PrimeCare Hospital" style="width: 130px; max-width: 130px; height: auto; display: inline-block; border: none; outline: none;" />
+                  ${logoSrc ? `<img src="${logoSrc}" alt="PrimeCare Hospital" style="width: 130px; max-width: 130px; height: auto; display: inline-block; border: none; outline: none;" />` : ''}
                 </td>
               </tr>
             </table>

@@ -35,7 +35,7 @@ const { verifyRole } = require('../middleware/roleMiddleware');
 router.get('/recommendations', getRecommendations);
 router.get('/availability/:doctorId', getDoctorAvailability);
 
-<!-- Video Consultation Room Lookup (deep-link resolution for email join buttons) -->
+// Video Consultation Room Lookup (deep-link resolution for email join buttons)
 router.get('/room/:roomId', getAppointmentByRoom);
 
 /* ── Booking & Patient Lifecycle ── */
@@ -45,7 +45,7 @@ router.get('/patient/:identifier', verifyPatientSelf, getPatientAppointments);
 router.put('/:id/reschedule', verifyAppointmentAccess({ patient: true, doctor: false }), verifyRole('patient'), rescheduleAppointment);
 router.put('/:id/cancel', verifyAppointmentAccess({ patient: true, doctor: false }), verifyRole('patient'), cancelAppointment);
 
-<!-- Doctor Clinical & Queue Lifecycle -->
+// Doctor Clinical & Queue Lifecycle
 router.get('/', requireAuth, verifyRole('doctor'), getDoctorAppointments);
 router.get('/doctor/:doctorId', verifyDoctorSelf, verifyRole('doctor'), getDoctorAppointments);
 router.patch('/:id/consultation', verifyAppointmentAccess({ patient: false, doctor: true }), verifyRole('doctor'), updateConsultationStatus);

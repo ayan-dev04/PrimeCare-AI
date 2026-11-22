@@ -31,7 +31,10 @@ const appointmentSchema = new mongoose.Schema({
     // Real-time automated reminder tracking (prevents duplicate reminder emails)
     reminderSent: { type: Boolean, default: false },
     // Booking confirmation emails are dispatched once per appointment
-    confirmationEmailSent: { type: Boolean, default: false }
+    confirmationEmailSent: { type: Boolean, default: false },
+    patientEmailSent: { type: Boolean, default: false },
+    doctorEmailSent: { type: Boolean, default: false },
+    emailDeliveryError: { type: String, default: '' }
 }, { timestamps: true });
 
 // Double-booking shield: two LIVE bookings for the same doctor/date/slot cannot coexist.
