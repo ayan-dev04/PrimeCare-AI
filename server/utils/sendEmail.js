@@ -118,7 +118,7 @@ const sendViaSmtp = async ({ to, subject, html, fromEmail, fromName, attachments
     return { success: true, provider: 'smtp', messageId: info.messageId };
 };
 
-const sendEmail = async (options = {}) => {
+const sendEmail = async (options = {}, attempt = 1) => {
     const recipient = options.to || options.email;
     if (!recipient) {
         console.warn('[EMAIL Warning] No recipient specified in sendEmail options.');
@@ -149,10 +149,14 @@ const sendEmail = async (options = {}) => {
         else if (provider === 'sendgrid') result = await sendViaSendGrid(payload);
         else result = await sendViaSmtp(payload);
 
-        console.log(`[EMAIL SUCCESS] Provider: ${result.provider} | Sent to: ${recipient} | Subject: ${options.subject}`);
+        console.log(`[EMAIL SUCCESS] Provider: ${result.provider} | MessageId: ${result.messageId} | Sent to: ${recipient} | Subject: ${options.subject}`);
         return result;
     } catch (error) {
-        console.error(`[EMAIL ERROR] Provider: ${provider || 'smtp'} | Recipient: ${recipient} | Message: ${error.message}`);
+        console.error(`[EMAIL ERROR] Provider: ${provider || 'smtp'} | Attempt: ${attempt} | Recipient: ${recipient} | Message: ${error.message}`);
+        if (attempt === 1) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            return sendEmail(options, 2);
+        }
         return { success: false, provider: provider || 'smtp', error: error.message };
     }
 };

@@ -320,7 +320,7 @@ exports.bookAppointment = async (req, res) => {
                         console.error('[Booking Email Dispatch Warning] Failed to send email notices:', emailErr.message);
                         await Appointment.updateOne(
                             { _id: appointmentId },
-                            { emailDeliveryError: emailErr.message }
+                            { $inc: { emailRetryCount: 1 }, emailDeliveryError: emailErr.message }
                         ).catch(() => {});
                     });
             });

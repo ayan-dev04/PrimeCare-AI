@@ -34,6 +34,7 @@ const appointmentSchema = new mongoose.Schema({
     confirmationEmailSent: { type: Boolean, default: false },
     patientEmailSent: { type: Boolean, default: false },
     doctorEmailSent: { type: Boolean, default: false },
+    emailRetryCount: { type: Number, default: 0 },
     emailDeliveryError: { type: String, default: '' }
 }, { timestamps: true });
 
