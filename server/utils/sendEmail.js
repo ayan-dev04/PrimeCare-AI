@@ -46,8 +46,11 @@ const postJson = async (url, headers, body) => {
 };
 
 const sendViaBrevo = async ({ to, subject, html, fromEmail, fromName }) => {
+    // Brevo requires the sender email to be an authorized/verified sender in the Brevo account.
+    // If BREVO_SENDER_EMAIL is defined, prioritize it. Otherwise fallback to configured sender or the verified account email.
+    const senderEmail = process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_FROM || 'ayanansaridev3533@gmail.com';
     const body = {
-        sender: { email: fromEmail, name: fromName },
+        sender: { email: senderEmail, name: fromName },
         to: [{ email: to }],
         subject,
         htmlContent: html
@@ -144,7 +147,18 @@ const sendEmail = async (options = {}, attempt = 1) => {
 
     try {
         let result;
-        if (provider === 'brevo') result = await sendViaBrevo(payload);
+        if (provider === 'brevo') {
+            try {
+                result = await sendViaBrevo(payload);
+            } catch (brevoErr) {
+                console.warn(`[EMAIL WARNING] Brevo delivery failed: ${brevoErr.message}. Attempting SMTP fallback...`);
+                if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+                    result = await sendViaSmtp(payload);
+                } else {
+                    throw brevoErr;
+                }
+            }
+        }
         else if (provider === 'resend') result = await sendViaResend(payload);
         else if (provider === 'sendgrid') result = await sendViaSendGrid(payload);
         else result = await sendViaSmtp(payload);

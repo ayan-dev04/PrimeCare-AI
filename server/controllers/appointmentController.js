@@ -326,6 +326,12 @@ exports.bookAppointment = async (req, res) => {
             });
         }
 
+        // Notify connected clients via Socket.IO for real-time queue refresh
+        const notifyQueue = req.app.get('notifyQueueUpdate');
+        if (typeof notifyQueue === 'function') {
+            notifyQueue({ doctorId: doctor._id.toString(), patientEmail: callerEmail, event: 'booked' });
+        }
+
         res.status(201).json({ success: true, appointment });
     } catch (err) {
         if (err?.code === 11000) {
@@ -387,6 +393,11 @@ exports.rescheduleAppointment = async (req, res) => {
         appt.activeSlotKey = `${date}|${timeSlot}`;
         await appt.save();
 
+        const notifyQueue = req.app.get('notifyQueueUpdate');
+        if (typeof notifyQueue === 'function') {
+            notifyQueue({ doctorId: appt.doctor?.toString(), patientEmail: appt.patientEmail, event: 'rescheduled' });
+        }
+
         res.status(200).json({ success: true, appointment: appt });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -397,6 +408,12 @@ exports.cancelAppointment = async (req, res) => {
     try {
         const appt = await Appointment.findByIdAndUpdate(req.params.id, { status: 'cancelled', $unset: { activeSlotKey: '' } }, { new: true });
         if (!appt) return res.status(404).json({ success: false, error: 'Appointment not found' });
+
+        const notifyQueue = req.app.get('notifyQueueUpdate');
+        if (typeof notifyQueue === 'function') {
+            notifyQueue({ doctorId: appt.doctor?.toString(), patientEmail: appt.patientEmail, event: 'cancelled' });
+        }
+
         res.status(200).json({ success: true, message: 'Appointment cancelled.', appointment: appt });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -432,6 +449,11 @@ exports.updateConsultationStatus = async (req, res) => {
 
         const appointment = await Appointment.findByIdAndUpdate(id, bookUpdate, { new: true });
         if (!appointment) return res.status(404).json({ success: false, error: 'Appointment not found' });
+
+        const notifyQueue = req.app.get('notifyQueueUpdate');
+        if (typeof notifyQueue === 'function') {
+            notifyQueue({ doctorId: appointment.doctor?.toString(), patientEmail: appointment.patientEmail, event: 'status_updated', status });
+        }
 
         res.status(200).json({ success: true, appointment });
     } catch (err) {

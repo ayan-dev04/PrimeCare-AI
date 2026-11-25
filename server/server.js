@@ -16,6 +16,36 @@ const initReminderScheduler = require('./utils/reminderScheduler');
 const app = express();
 const server = http.createServer(app);
 
+// ── Real-time Socket.IO Setup ──
+const { Server } = require('socket.io');
+const io = new Server(server, {
+    cors: {
+        origin: (origin, callback) => callback(null, true),
+        methods: ['GET', 'POST'],
+        credentials: true
+    }
+});
+
+io.on('connection', (socket) => {
+    socket.on('join_doctor', (doctorId) => {
+        if (doctorId) socket.join(`doctor_${doctorId}`);
+    });
+    socket.on('join_patient', (patientEmail) => {
+        if (patientEmail) socket.join(`patient_${patientEmail.toLowerCase()}`);
+    });
+});
+
+app.set('io', io);
+app.set('notifyQueueUpdate', (data = {}) => {
+    try {
+        io.emit('queue_updated', data);
+        if (data.doctorId) io.to(`doctor_${data.doctorId}`).emit('doctor_queue_updated', data);
+        if (data.patientEmail) io.to(`patient_${data.patientEmail.toLowerCase()}`).emit('patient_queue_updated', data);
+    } catch (e) {
+        console.warn('[Socket.IO Emit Warning]', e.message);
+    }
+});
+
 
 // ── CORS & Security Configuration ──
 // Support comma-separated origins from CLIENT_URL in addition to local development ports

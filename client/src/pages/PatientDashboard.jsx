@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import API, { SERVER_URL } from '../api';
+import { io } from 'socket.io-client';
 import { useUser } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -63,6 +64,20 @@ export default function PatientDashboard() {
     useEffect(() => {
         if (patientEmail) fetchAllPatientData();
     }, [user?.id, patientEmail]);
+
+    // Live Socket.IO listener for instant appointment and queue updates
+    useEffect(() => {
+        if (!patientEmail) return;
+        const socket = io(SERVER_URL, { transports: ['websocket', 'polling'] });
+        socket.emit('join_patient', patientEmail);
+
+        socket.on('queue_updated', () => fetchAllPatientData());
+        socket.on('patient_queue_updated', () => fetchAllPatientData());
+
+        return () => {
+            socket.disconnect();
+        };
+    }, [patientEmail]);
 
     const fetchAllPatientData = async () => {
         setLoading(true);

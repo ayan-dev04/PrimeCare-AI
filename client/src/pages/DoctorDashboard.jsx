@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import API from '../api';
+import API, { SERVER_URL } from '../api';
+import { io } from 'socket.io-client';
 import { useUser } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom';
 import {
     Activity, Users, Calendar, Video, FileText, CheckCircle, Clock,
     BarChart3, Stethoscope, ChevronRight, AlertCircle, Plus, Trash2, Printer, Upload, Download, FlaskConical, FolderOpen
 } from 'lucide-react';
-import { SERVER_URL } from '../api';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -83,6 +83,20 @@ export default function DoctorDashboard() {
     useEffect(() => {
         fetchDoctorData();
     }, [doctorEmail, isLoaded]);
+
+    // Live Socket.IO listener for instant doctor queue updates
+    useEffect(() => {
+        if (!doctorProfile?._id) return;
+        const socket = io(SERVER_URL, { transports: ['websocket', 'polling'] });
+        socket.emit('join_doctor', doctorProfile._id);
+
+        socket.on('queue_updated', () => fetchDoctorData());
+        socket.on('doctor_queue_updated', () => fetchDoctorData());
+
+        return () => {
+            socket.disconnect();
+        };
+    }, [doctorProfile?._id]);
 
     const fetchDoctorData = async () => {
         setLoading(true);
