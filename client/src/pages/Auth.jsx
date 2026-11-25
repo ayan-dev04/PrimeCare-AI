@@ -78,7 +78,20 @@ export default function Auth() {
                 else navigate('/admin-dashboard');
             }
         } catch (err) {
-            setErrorMsg(err.response?.data?.message || 'Invalid credentials or user not found');
+            if (!err.response) {
+                // Network error, DNS resolution failure, connection reset, or timeout
+                if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+                    setErrorMsg('Server took too long to respond. The backend may be waking up from sleep. Please try again.');
+                } else {
+                    setErrorMsg('Unable to connect to PrimeCare server. The service might be starting up. Please check your internet connection and try again.');
+                }
+            } else if (err.response.status >= 500) {
+                setErrorMsg('Server error encountered while processing your login. Please try again shortly.');
+            } else if (err.response.status === 429) {
+                setErrorMsg('Too many login attempts. Please wait a minute before trying again.');
+            } else {
+                setErrorMsg(err.response?.data?.message || 'Invalid email or password.');
+            }
         } finally {
             setLoading(false);
         }
